@@ -1,0 +1,254 @@
+#Ancilleno Davis
+#Geo 560 rcode
+
+#This r-code has been devloped by Ancilleno Davis in partial completion of the 
+#requirements for the Final project in GEO 560 at Miami University
+#PhD in Ecology Evolution and Environmental Science at Miami University in Oxford, Ohio.
+
+#The purpose of this Rcode is to import data from eBird and landsat images preprocessed in Google Earth Engine
+#for the island of Grand Bahama(GB), The Bahamas
+#To determine how well different habitat classification models
+#in Google Earth Engine compare to one another
+#to determine if there is a correlation between any of the Bahamian bird species
+#used and the habitat as found through the supervised classification
+#reorganize and analyze the data to answer the following questions
+
+
+#Set my working directory and load necessary libraries
+
+setwd("C:/Users/davisao2/Desktop/open source GIS/eBird r code")
+
+#importing raster data
+library(raster)
+library(sp)
+library(rgdal)
+library(reshape2)#contains dcast for reorganizing data into presence absence etc.
+library(RStoolbox)
+library(readr)
+
+setwd("C:/Users/davisao2/Desktop/open source GIS/eBird r code")
+#3 Classified habitat maps from Landsat Bands 4, 5, 7 at 30 m resolution via Google Earth Explorer
+
+#GMO Max Entropy habitat classification
+GMOclasses<-raster("GMOMaxEntropy30mL8B457.tif")
+GMOclasses
+#Random Forests
+RDMForestsclasses<-raster("RDMForest30mL8B457.tif")
+RDMForestsclasses
+#Fast Naive Bayes
+FNBayesclasses<-raster("FNBayes30mL8B457.tif")
+FNBayesclasses
+
+#using the "cellStats(VectorName, max)" function,
+#I can see how many values they each contain and this is 0-6
+# cellStats(GMOclasses, min)
+# [1] 0
+# cellStats(GMOclasses, max)
+# [1] 6
+# cellStats(GMOclasses, range)
+# [1] 0 6
+GMOclasses@extent #gives me the boundaries of the raster
+#I want a histogram of the pixel values
+hist(GMOclasses, 
+     main="distribution of habitat classes", 
+     col="red")
+#most of the pixels are water or 0 (as expected)
+#I am assigning the colors I would like to represent my habitat classes
+legend=c("Water", "Pine", "Wetland", "Sand", "Urban", "Grass", "High water table community")
+col=c("blue", #ocean
+      "dark green", #Pine Forest
+      "brown", #Wetlands
+      "white",#sand
+      "gray", #urban
+      "Light green", #grass
+      "yellow")#high water table plant communities
+
+plot(GMOclasses,col=col, main="GMO Max Entropy habitat classes", ylab="Latitude", xlab="Longitude")
+plot(RDMForestsclasses,col=col, main = "Random Forests habitat classes", ylab="Latitude", xlab="Longitude")
+plot(FNBayesclasses,col=col, main = "Fast Naive Bayes habitat classes", ylab="Latitude", xlab="Longitude")
+
+
+
+
+#These were all exported from GEEExplorer
+#at the same extent so the dimensions line up correctly.
+
+#import all locations with Bahamian bird species
+#create data frame with all bird observation data for Grand Bahama
+eBirdGBMay2016 <- read_csv("C:/Users/davisao2/Desktop/open source GIS/eBird r code/GB2016terrestrial.csv", 
+                           col_types = cols(`ALL SPECIES REPORTED` = col_factor(levels = c("0","1")), 
+                                            APPROVED = col_factor(levels = c("0", "1")), 
+                                            `EFFORT AREA HA` = col_number(), 
+                                            `EFFORT DISTANCE KM` = col_number(), 
+                                            LATITUDE = col_number(), 
+                                            LONGITUDE = col_number(), 
+                                            `OBSERVATION COUNT` = col_integer(), 
+                                            `OBSERVATION DATE` = col_datetime(format = "%m/%d/%Y %H:%M"), 
+                                            REVIEWED = col_factor(levels = c("0", "1")), 
+                                            `TAXONOMIC ORDER` = col_character(), 
+                                            `TIME OBSERVATIONS STARTED` = col_time(format = "%H:%M:%S")))
+
+#Compile list of Bahamian endemic and resident species of importance for comparison
+BAHspecieslist<-c("Bahama Mockingbird", "Bahama Swallow", "Bahama Warbler", 
+                  "Bahama Woodstar", "Bahama Yellowthroat","Common Ground Dove", 
+                  "Northern Mockingbird", "Red-legged Thrush")
+#NB this list is not comprehensive
+
+##insert column to classify all bird species as a Bahamian or not 
+#based on being in BAHspecieslist 
+eBirdGBMay2016$BAHspecies<-eBirdGBMay2016$`COMMON NAME`%in% BAHspecieslist
+
+#Create subset of points for bird species in the Bahamian species list only
+eBirdGBMay2016BAH.sub<-subset(eBirdGBMay2016, eBirdGBMay2016$BAHspecies=='TRUE')
+View(eBirdGBMay2016BAH.sub)
+BahSPSwide<-dcast(eBirdGBMay2016BAH.sub, 
+                  LOCALITY+
+                    LONGITUDE+
+                    LATITUDE
+                    ~`COMMON NAME`, #each record has a column for the species common name
+                  value.var = "OBSERVATION COUNT") #each Common name column includes the number of surveys in which the species was seen.
+
+
+#test agreement between the three rasters.
+#select 100 localities from the Bahamian bird observations random points
+
+Random100<-BahSPSwide[sample(nrow(BahSPSwide),100),]
+#extract the value of each raster at those locations
+
+Random100xy<-data.frame(Random100$LONGITUDE, Random100$LATITUDE)
+Random100xy
+
+coordinates(BahSPSwide) <- ~LONGITUDE+LATITUDE 
+rast <- raster(ncol = 258, nrow = 111)#based on the imported rasters
+extent(rast) <- extent(GMOclasses)#same spatial extent as the other rasters.
+NOMOlayer<-rasterize(BahSPSwide, rast, BahSPSwide$`Northern Mockingbird`, fun = sum)
+BAMOlayer<-rasterize(BahSPSwide, rast, BahSPSwide$`Bahama Mockingbird`, fun = sum)
+BASWlayer<-rasterize(BahSPSwide, rast, BahSPSwide$`Bahama Swallow`, fun = sum)
+BAWAlayer<-rasterize(BahSPSwide, rast, BahSPSwide$`Bahama Warbler`, fun = sum)
+BAWOlayer<-rasterize(BahSPSwide, rast, BahSPSwide$`Bahama Woodstar`, fun = sum)
+BAYElayer<-rasterize(BahSPSwide, rast, BahSPSwide$`Bahama Yellowthroat`, fun = sum)
+
+
+plot(x,col=color.gradient(x), pch=19,cex=2)
+
+
+plot(NOMOlayer, main="Northern Mockingbird distribution on Grand Bahama", xlab= "Longitude", ylab="Latitude")
+plot(BAMOlayer, main="Bahama Mockingbird distribution on Grand Bahama", xlab= "Longitude", ylab="Latitude")
+plot(BASWlayer, main="Bahama Swallow distribution on Grand Bahama", xlab= "Longitude", ylab="Latitude")
+plot(BAWAlayer, main="Bahama Warbler distribution on Grand Bahama", xlab= "Longitude", ylab="Latitude")
+plot(BAWOlayer, main="Bahama Woodstar distribution on Grand Bahama", xlab= "Longitude", ylab="Latitude")
+plot(BAYElayer, main="Bahama Yellowthroat distribution on Grand Bahama", xlab= "Longitude", ylab="Latitude")
+
+#stack the rasters
+classystack<-stack(FNBayesclasses,GMOclasses, RDMForestsclasses)
+classystack
+birdystack<-stack(NOMOlayer,
+                  BAMOlayer,
+                  BASWlayer,
+                  BAWAlayer,
+                  BAWOlayer,
+                  BAYElayer)
+birdystack
+names(birdystack)<-c("NOMOlayer", 
+                     "BAMOlayer", 
+                     "BASWlayer", 
+                     "BAWAlayer", 
+                     "BAWOlayer", 
+                     "BAYElayer")
+
+#using a correlation matrix to see how well the three habitat layers match up
+classystackcorr<-layerStats(classystack, #the raster stack of habitat classifications
+                     'pearson', #Pearson's correlation
+                     na.rm=T)# this is needed so the NA's in a layer don't throw errors
+Classycor<-classystackcorr$'pearson correlation coefficient'
+Classycor
+#The Bayes and GMO classifications are about the same
+#but the Random Forest model is significantly different
+
+#is there a correlation between the bird layers?
+Birdystackcorr=layerStats(birdystack, 'pearson', na.rm=T)
+Birdycor=Birdystackcorr$'pearson correlation coefficient'
+Birdycor
+#none of the bird distributions are significantly correlated according to this
+
+#Create stacks using each habitat classification and the birds
+FNBstack<-stack(FNBayesclasses, 
+                NOMOlayer,
+                BAMOlayer,
+                BASWlayer,
+                BAWAlayer,
+                BAWOlayer,
+                BAYElayer)
+
+names(FNBstack)<-c("FNBayesclasses",
+                   "NOMOlayer", 
+                   "BAMOlayer", 
+                   "BASWlayer", 
+                   "BAWAlayer", 
+                   "BAWOlayer", 
+                   "BAYElayer")
+FNBstack
+
+GMOstack<-stack(GMOclasses, 
+                NOMOlayer,
+                  BAMOlayer,
+                  BASWlayer,
+                  BAWAlayer,
+                  BAWOlayer,
+                  BAYElayer)
+
+names(GMOstack)<-c("GMOclasses",
+                     "NOMOlayer", 
+                     "BAMOlayer", 
+                     "BASWlayer", 
+                     "BAWAlayer", 
+                     "BAWOlayer", 
+                     "BAYElayer")
+GMOstack
+RDMForeststack<-stack(RDMForestsclasses, 
+                      NOMOlayer,
+                      BAMOlayer,
+                      BASWlayer,
+                      BAWAlayer,
+                      BAWOlayer,
+                      BAYElayer)
+
+names(RDMForeststack)<-c("RDMForestsclasses",
+                   "NOMOlayer", 
+                   "BAMOlayer", 
+                   "BASWlayer", 
+                   "BAWAlayer", 
+                   "BAWOlayer", 
+                   "BAYElayer")
+RDMForeststack
+
+GMOstackcorr<-layerStats(GMOstack, #the raster stack of GMO habitat classification and bird layers
+                            'pearson', #Pearson's correlation
+                            na.rm=T)# this is needed so the NA's in a layer don't throw errors
+GMObirdcor<-GMOstackcorr$'pearson correlation coefficient'
+GMObirdcor
+#Extract the values from each raster at the random locations 
+rastsamp<-extract(classystack,Random100xy)
+rastsamp
+#extract the values of bird observations at each of the random locations
+birdsamp<-extract(birdystack, Random100xy)
+birdsamp
+
+
+###this code chunk was attemppting to predict the birds from a 
+###subset of the data but not sure I am doing it right.
+
+# sr <- sampleRandom(GMOstack, 5000) # sample 5000 random grid cells
+# 
+# # run PCA on random sample with correlation matrix
+# # retx=FALSE means don't save PCA scores 
+# pca <- prcomp(sr, scale=TRUE, retx=FALSE) 
+# 
+# # write PCA model to file 
+# dput(pca, file=paste("_pca.csv"))
+# 
+# x <- predict(GMOstack, pca, index=1:6) # create new rasters based on PCA predictions
+# plot(x)
+# y<- predict(GMOstack, pca, index=1)
+# y
+# plot(y)
